@@ -7,9 +7,11 @@ from crypto_utils import decrypt_text, mask_diagnosis, show_contact, show_name
 from database import (
     add_patient,
     anonymize_all,
+    get_all_logs,
     get_all_patients,
     get_encrypted_sample,
     init_db,
+    log_action,
     update_patient,
 )
 
@@ -39,6 +41,7 @@ if "logged_in" not in st.session_state:
     st.session_state.username = ""
     st.session_state.role = ""
     st.session_state.user_id = None
+    st.session_state.view_logged = False
 
 
 def logout():
@@ -46,6 +49,7 @@ def logout():
     st.session_state.username = ""
     st.session_state.role = ""
     st.session_state.user_id = None
+    st.session_state.view_logged = False
 
 
 def valid_contact(contact):
@@ -70,18 +74,30 @@ if not st.session_state.logged_in:
             if not username or not password:
                 st.error("Please enter username and password.")
             else:
+                db_error = False
                 try:
                     user = check_login(username.strip(), password)
                 except Exception:
                     st.error("Something went wrong. Please try again.")
                     user = None
+                    db_error = True
                 if user is None:
+                    if not db_error:
+                        try:
+                            log_action(None, "unknown", "login", f"Failed login for {username.strip()}")
+                        except Exception:
+                            pass
                     st.error("Wrong username or password.")
                 else:
                     st.session_state.logged_in = True
                     st.session_state.username = user["username"]
                     st.session_state.role = user["role"]
                     st.session_state.user_id = user["user_id"]
+                    st.session_state.view_logged = False
+                    try:
+                        log_action(user["user_id"], user["role"], "login", f"{user['username']} logged in")
+                    except Exception:
+                        pass
                     st.rerun()
     st.write("")
     st.markdown(
@@ -93,6 +109,10 @@ if not st.session_state.logged_in:
 role = st.session_state.role
 st.write(f"Logged in as **{st.session_state.username}** ({role})")
 if st.button("Logout"):
+    try:
+        log_action(st.session_state.user_id, role, "logout", f"{st.session_state.username} logged out")
+    except Exception:
+        pass
     logout()
     st.rerun()
 
@@ -109,6 +129,14 @@ st.write("")
 st.subheader("Patients")
 try:
     patients = get_all_patients()
+    # Log the view once per login. Streamlit runs this page again on
+    # every click, so logging it every time would fill the logs.
+    if not st.session_state.get("view_logged"):
+        try:
+            log_action(st.session_state.user_id, role, "view", "Viewed patient list")
+        except Exception:
+            pass
+        st.session_state.view_logged = True
 except Exception:
     st.error("Something went wrong. Please try again.")
     patients = []
@@ -138,7 +166,11 @@ if can_do(role, "anonymize"):
     )
     if st.button("Anonymize Data"):
         try:
-            anonymize_all()
+            count = anonymize_all()
+            try:
+                log_action(st.session_state.user_id, role, "anonymize", f"Anonymized {count} patients")
+            except Exception:
+                pass
             st.success("Data anonymized.")
             st.rerun()
         except Exception:
@@ -173,12 +205,16 @@ if can_do(role, "add"):
             st.error("Please enter a valid contact number.")
         else:
             try:
-                add_patient(
+                new_id = add_patient(
                     new_name.strip(),
                     new_contact.strip(),
                     new_diagnosis.strip(),
                     str(new_date),
                 )
+                try:
+                    log_action(st.session_state.user_id, role, "add", f"Added patient {new_name.strip()} (ID {new_id})")
+                except Exception:
+                    pass
                 st.success("Patient added.")
                 st.rerun()
             except Exception:
@@ -207,10 +243,51 @@ if can_do(role, "edit") and patients:
                 update_patient(
                     picked, edit_name.strip(), edit_contact.strip(), edit_diagnosis.strip()
                 )
+                try:
+                    log_action(st.session_state.user_id, role, "update", f"Updated patient #{picked}")
+                except Exception:
+                    pass
                 st.success("Patient updated.")
                 st.rerun()
             except Exception:
                 st.error("Something went wrong. Please try again.")
+
+if can_do(role, "view_logs"):
+    st.write("")
+    st.subheader("Audit Logs")
+    try:
+        logs = get_all_logs()
+    except Exception:
+        st.error("Something went wrong. Please try again.")
+        logs = []
+    left, right = st.columns(2)
+    with left:
+        action_filter = st.selectbox(
+            "Action", ["All", "login", "logout", "view", "add", "update", "anonymize"]
+        )
+    with right:
+        role_filter = st.selectbox(
+            "Role", ["All", "admin", "doctor", "receptionist", "unknown"]
+        )
+    log_rows = []
+    for log in logs:
+        log_id, log_user, log_role, log_action_name, log_time, log_details = log
+        if action_filter != "All" and log_action_name != action_filter:
+            continue
+        if role_filter != "All" and log_role != role_filter:
+            continue
+        log_rows.append(
+            {
+                "ID": log_id,
+                "User": log_user if log_user is not None else "-",
+                "Role": log_role,
+                "Action": log_action_name,
+                "Time": log_time,
+                "Details": log_details,
+            }
+        )
+    st.write(f"{len(log_rows)} log entries")
+    st.dataframe(log_rows, use_container_width=True)
 
 st.write("")
 st.markdown(

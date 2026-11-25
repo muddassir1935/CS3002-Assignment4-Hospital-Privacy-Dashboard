@@ -1,5 +1,6 @@
 import hashlib
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from crypto_utils import encrypt_text, make_anon_name, mask_contact
@@ -171,6 +172,28 @@ def get_encrypted_sample():
     ).fetchone()
     conn.close()
     return row
+
+
+def log_action(user_id, role, action, details):
+    # Every important action is written here, with who did it and when.
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO logs (user_id, role, action, timestamp, details)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (user_id, role, action, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), details),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_all_logs():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT log_id, user_id, role, action, timestamp, details"
+        " FROM logs ORDER BY log_id DESC"
+    ).fetchall()
+    conn.close()
+    return rows
 
 
 if __name__ == "__main__":
