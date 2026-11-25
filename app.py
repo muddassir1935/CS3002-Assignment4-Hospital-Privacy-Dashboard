@@ -45,6 +45,7 @@ if "logged_in" not in st.session_state:
     st.session_state.role = ""
     st.session_state.user_id = None
     st.session_state.view_logged = False
+    st.session_state.notice = ""
 if "start_time" not in st.session_state:
     st.session_state.start_time = datetime.now()
 if "last_sync" not in st.session_state:
@@ -155,6 +156,17 @@ else:
 st.markdown(f'<div class="card">{what}</div>', unsafe_allow_html=True)
 st.write("")
 
+# A message saved before a rerun (add, edit, anonymize) is shown once here.
+if st.session_state.get("notice"):
+    st.success(st.session_state.notice)
+    st.session_state.notice = ""
+
+# The consent tick is cleared here, before the Add form is drawn.
+# It cannot be cleared after the checkbox itself is made.
+if st.session_state.get("clear_consent"):
+    st.session_state.add_consent = False
+    st.session_state.clear_consent = False
+
 st.subheader("Patients")
 try:
     patients = get_all_patients()
@@ -208,7 +220,7 @@ if can_do(role, "anonymize"):
                 log_action(st.session_state.user_id, role, "anonymize", f"Anonymized {count} patients")
             except Exception:
                 pass
-            st.success("Data anonymized.")
+            st.session_state.notice = "Data anonymized."
             st.rerun()
         except Exception:
             st.error("Something went wrong. Please try again.")
@@ -255,8 +267,8 @@ if can_do(role, "add"):
                     log_action(st.session_state.user_id, role, "add", f"Added patient {new_name.strip()} (ID {new_id})")
                 except Exception:
                     pass
-                st.session_state.add_consent = False
-                st.success("Patient added.")
+                st.session_state.notice = "Patient added."
+                st.session_state.clear_consent = True
                 st.rerun()
             except Exception:
                 st.error("Something went wrong. Please try again.")
@@ -288,7 +300,7 @@ if can_do(role, "edit") and patients:
                     log_action(st.session_state.user_id, role, "update", f"Updated patient #{picked}")
                 except Exception:
                     pass
-                st.success("Patient updated.")
+                st.session_state.notice = "Patient updated."
                 st.rerun()
             except Exception:
                 st.error("Something went wrong. Please try again.")
