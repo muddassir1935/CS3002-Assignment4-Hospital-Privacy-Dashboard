@@ -28,5 +28,5 @@ adds and edits records but cannot see sensitive data.
 
 - `app.py` — the dashboard
 - `database.py` — tables and sample data
-- `auth.py` — login and roles (next step)
+- `auth.py` — login and roles
 - `crypto_utils.py` — masking and encryption (next step)
