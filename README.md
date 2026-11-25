@@ -27,6 +27,6 @@ adds and edits records but cannot see sensitive data.
 ## Files
 
 - `app.py` — the dashboard
-- `database.py` — tables and sample data (next step)
+- `database.py` — tables and sample data
 - `auth.py` — login and roles (next step)
 - `crypto_utils.py` — masking and encryption (next step)
