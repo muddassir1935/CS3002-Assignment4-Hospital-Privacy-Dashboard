@@ -29,4 +29,9 @@ adds and edits records but cannot see sensitive data.
 - `app.py` — the dashboard
 - `database.py` — tables and sample data
 - `auth.py` — login and roles
-- `crypto_utils.py` — masking (encryption in the next step)
+- `crypto_utils.py` — masking and Fernet encryption
+
+The encryption key is made on the first run and saved as `secret.key`.
+It is not pushed to the repo. If you copy `hospital.db` to another
+computer, copy `secret.key` too, or press Anonymize Data again to make
+new encrypted values.

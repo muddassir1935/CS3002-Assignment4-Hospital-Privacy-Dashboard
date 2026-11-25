@@ -3,8 +3,15 @@ from datetime import date
 import streamlit as st
 
 from auth import can_do, check_login
-from crypto_utils import mask_diagnosis, show_contact, show_name
-from database import add_patient, get_all_patients, init_db, update_patient
+from crypto_utils import decrypt_text, mask_diagnosis, show_contact, show_name
+from database import (
+    add_patient,
+    anonymize_all,
+    get_all_patients,
+    get_encrypted_sample,
+    init_db,
+    update_patient,
+)
 
 st.set_page_config(page_title="Community Hospital Dashboard", layout="wide")
 
@@ -122,6 +129,36 @@ for p in patients:
 st.write(f"{len(rows)} patients")
 st.dataframe(rows, use_container_width=True)
 st.write("")
+
+if can_do(role, "anonymize"):
+    st.subheader("Anonymize data")
+    st.write(
+        "This replaces names with ANON ids and masks contacts. "
+        "The real names are kept encrypted, so Admin can still read them back."
+    )
+    if st.button("Anonymize Data"):
+        try:
+            anonymize_all()
+            st.success("Data anonymized.")
+            st.rerun()
+        except Exception:
+            st.error("Something went wrong. Please try again.")
+    anon_rows = [
+        {"ID": p[0], "Anonymized Name": p[4], "Anonymized Contact": p[5]}
+        for p in patients
+        if p[4]
+    ]
+    if anon_rows:
+        st.dataframe(anon_rows, use_container_width=True)
+        try:
+            sample = get_encrypted_sample()
+            if sample:
+                st.write("Encrypted name (first patient):")
+                st.code(sample[1])
+                st.write(f"Decrypted back: {decrypt_text(sample[1])}")
+        except Exception:
+            st.error("Something went wrong. Please try again.")
+    st.write("")
 
 if can_do(role, "add"):
     st.subheader("Add patient")
