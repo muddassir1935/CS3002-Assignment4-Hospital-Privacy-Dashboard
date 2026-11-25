@@ -1,7 +1,10 @@
+from datetime import date
+
 import streamlit as st
 
 from auth import can_do, check_login
-from database import init_db
+from crypto_utils import mask_diagnosis, show_contact, show_name
+from database import add_patient, get_all_patients, init_db, update_patient
 
 st.set_page_config(page_title="Community Hospital Dashboard", layout="wide")
 
@@ -36,6 +39,11 @@ def logout():
     st.session_state.username = ""
     st.session_state.role = ""
     st.session_state.user_id = None
+
+
+def valid_contact(contact):
+    digits = "".join(ch for ch in contact if ch.isdigit())
+    return len(digits) >= 7
 
 
 st.markdown(
@@ -91,14 +99,81 @@ else:
 st.markdown(f'<div class="card">{what}</div>', unsafe_allow_html=True)
 st.write("")
 
-# The patient list, anonymization and logs come in the next steps.
-# can_do is already the check those pages will use.
-if can_do(role, "view_raw"):
-    st.info("Patient list and anonymization are next.")
-elif can_do(role, "view_anon"):
-    st.info("Patient list (anonymized) is next.")
-else:
-    st.info("Patient list is next.")
+st.subheader("Patients")
+try:
+    patients = get_all_patients()
+except Exception:
+    st.error("Something went wrong. Please try again.")
+    patients = []
+
+can_raw = can_do(role, "view_raw")
+rows = []
+for p in patients:
+    pid, name, contact, diagnosis, anon_name, anon_contact, date_added = p
+    rows.append(
+        {
+            "ID": pid,
+            "Name": show_name(name, anon_name, can_raw),
+            "Contact": show_contact(contact, anon_contact, can_raw),
+            "Diagnosis": diagnosis if role != "receptionist" else mask_diagnosis(),
+            "Date Added": date_added,
+        }
+    )
+st.write(f"{len(rows)} patients")
+st.dataframe(rows, use_container_width=True)
+st.write("")
+
+if can_do(role, "add"):
+    st.subheader("Add patient")
+    new_name = st.text_input("Name", key="add_name")
+    new_contact = st.text_input("Contact", key="add_contact")
+    new_diagnosis = st.text_input("Diagnosis", key="add_diagnosis")
+    new_date = st.date_input("Date added", value=date.today(), key="add_date")
+    if st.button("Save patient"):
+        if not new_name.strip() or not new_contact.strip() or not new_diagnosis.strip():
+            st.error("Please fill in all fields.")
+        elif not valid_contact(new_contact):
+            st.error("Please enter a valid contact number.")
+        else:
+            try:
+                add_patient(
+                    new_name.strip(),
+                    new_contact.strip(),
+                    new_diagnosis.strip(),
+                    str(new_date),
+                )
+                st.success("Patient added.")
+                st.rerun()
+            except Exception:
+                st.error("Something went wrong. Please try again.")
+    st.write("")
+
+if can_do(role, "edit") and patients:
+    st.subheader("Edit patient")
+    by_id = {p[0]: p for p in patients}
+    picked = st.selectbox(
+        "Choose a patient",
+        options=list(by_id.keys()),
+        format_func=lambda pid: f"#{pid} - {show_name(by_id[pid][1], by_id[pid][4], can_raw)}",
+    )
+    current = by_id[picked]
+    edit_name = st.text_input("Name", value=current[1], key="edit_name")
+    edit_contact = st.text_input("Contact", value=current[2], key="edit_contact")
+    edit_diagnosis = st.text_input("Diagnosis", value=current[3], key="edit_diagnosis")
+    if st.button("Save changes"):
+        if not edit_name.strip() or not edit_contact.strip() or not edit_diagnosis.strip():
+            st.error("Please fill in all fields.")
+        elif not valid_contact(edit_contact):
+            st.error("Please enter a valid contact number.")
+        else:
+            try:
+                update_patient(
+                    picked, edit_name.strip(), edit_contact.strip(), edit_diagnosis.strip()
+                )
+                st.success("Patient updated.")
+                st.rerun()
+            except Exception:
+                st.error("Something went wrong. Please try again.")
 
 st.write("")
 st.markdown(

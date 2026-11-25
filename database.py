@@ -88,6 +88,42 @@ def init_db():
     conn.close()
 
 
+def get_all_patients():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT patient_id, name, contact, diagnosis,"
+        " anonymized_name, anonymized_contact, date_added"
+        " FROM patients ORDER BY patient_id"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def add_patient(name, contact, diagnosis, date_added):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO patients (name, contact, diagnosis, date_added)"
+        " VALUES (?, ?, ?, ?)",
+        (name, contact, diagnosis, date_added),
+    )
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+
+def update_patient(patient_id, name, contact, diagnosis):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE patients SET name = ?, contact = ?, diagnosis = ?"
+        " WHERE patient_id = ?",
+        (name, contact, diagnosis, patient_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 if __name__ == "__main__":
     init_db()
     print("Database ready.")
