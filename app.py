@@ -9,6 +9,7 @@ from database import (
     anonymize_all,
     export_logs_csv,
     export_patients_csv,
+    get_actions_per_day,
     get_all_logs,
     get_all_patients,
     get_encrypted_sample,
@@ -48,6 +49,8 @@ if "start_time" not in st.session_state:
     st.session_state.start_time = datetime.now()
 if "last_sync" not in st.session_state:
     st.session_state.last_sync = ""
+if "consent_seen" not in st.session_state:
+    st.session_state.consent_seen = False
 
 
 def logout():
@@ -83,6 +86,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.write("")
+
+if not st.session_state.get("consent_seen"):
+    st.info(
+        "We collect patient data only for treatment, and we keep it safe. "
+        "By using this system you agree to our data policy."
+    )
+    if st.button("I understand"):
+        st.session_state.consent_seen = True
+        st.rerun()
 
 if not st.session_state.logged_in:
     left, middle, right = st.columns([1, 2, 1])
@@ -163,6 +175,10 @@ can_raw = can_do(role, "view_raw")
 rows = []
 for p in patients:
     pid, name, contact, diagnosis, anon_name, anon_contact, date_added = p
+    try:
+        days_old = (date.today() - date.fromisoformat(date_added)).days
+    except Exception:
+        days_old = 0
     rows.append(
         {
             "ID": pid,
@@ -170,10 +186,13 @@ for p in patients:
             "Contact": show_contact(contact, anon_contact, can_raw),
             "Diagnosis": diagnosis if role != "receptionist" else mask_diagnosis(),
             "Date Added": date_added,
+            "Days Old": days_old,
         }
     )
 st.write(f"{len(rows)} patients")
 st.dataframe(rows, use_container_width=True)
+old = [r for r in rows if r["Days Old"] > 365]
+st.write(f"{len(old)} records older than 365 days (flagged for review).")
 st.write("")
 
 if can_do(role, "anonymize"):
@@ -216,11 +235,14 @@ if can_do(role, "add"):
     new_contact = st.text_input("Contact", key="add_contact")
     new_diagnosis = st.text_input("Diagnosis", key="add_diagnosis")
     new_date = st.date_input("Date added", value=date.today(), key="add_date")
+    consent = st.checkbox("Patient agreed to share their data for treatment", key="add_consent")
     if st.button("Save patient"):
         if not new_name.strip() or not new_contact.strip() or not new_diagnosis.strip():
             st.error("Please fill in all fields.")
         elif not valid_contact(new_contact):
             st.error("Please enter a valid contact number.")
+        elif not consent:
+            st.error("Please take patient consent first.")
         else:
             try:
                 new_id = add_patient(
@@ -233,6 +255,7 @@ if can_do(role, "add"):
                     log_action(st.session_state.user_id, role, "add", f"Added patient {new_name.strip()} (ID {new_id})")
                 except Exception:
                     pass
+                st.session_state.add_consent = False
                 st.success("Patient added.")
                 st.rerun()
             except Exception:
@@ -336,6 +359,30 @@ if can_do(role, "view_logs"):
                     pass
         except Exception:
             st.error("Could not make the logs backup. Please try again.")
+
+if can_do(role, "view_logs"):
+    st.write("")
+    st.subheader("Activity")
+    try:
+        per_day = get_actions_per_day()
+    except Exception:
+        st.error("Something went wrong. Please try again.")
+        per_day = []
+    if not per_day:
+        st.write("No activity yet.")
+    else:
+        days = sorted({row[0] for row in per_day})
+        actions = sorted({row[1] for row in per_day})
+        chart_rows = []
+        for day in days:
+            entry = {"Day": day}
+            for action in actions:
+                entry[action] = 0
+            for row in per_day:
+                if row[0] == day:
+                    entry[row[1]] = row[2]
+            chart_rows.append(entry)
+        st.bar_chart(chart_rows, x="Day")
 
 st.write("")
 show_footer()

@@ -24,6 +24,9 @@ These are the demo accounts from the assignment:
 Admin sees full data, Doctor sees anonymized data only, Receptionist
 adds and edits records but cannot see sensitive data.
 
+Patients must agree before their record is saved, and records older
+than 365 days are flagged for review.
+
 ## Files
 
 - `app.py` — the dashboard

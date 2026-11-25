@@ -221,6 +221,18 @@ def export_logs_csv():
     return out.getvalue()
 
 
+def get_actions_per_day():
+    # How many actions happened on each day, for the activity graph.
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT date(timestamp), action, COUNT(*)"
+        " FROM logs GROUP BY date(timestamp), action"
+        " ORDER BY date(timestamp)"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
 if __name__ == "__main__":
     init_db()
     print("Database ready.")
