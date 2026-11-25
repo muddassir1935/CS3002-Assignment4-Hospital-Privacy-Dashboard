@@ -1,4 +1,6 @@
+import csv
 import hashlib
+import io
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -194,6 +196,29 @@ def get_all_logs():
     ).fetchall()
     conn.close()
     return rows
+
+
+def export_patients_csv():
+    # CSV backup of the patients table, for the Admin to download.
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        ["patient_id", "name", "contact", "diagnosis",
+         "anonymized_name", "anonymized_contact", "date_added"]
+    )
+    for row in get_all_patients():
+        writer.writerow(row)
+    return out.getvalue()
+
+
+def export_logs_csv():
+    # CSV backup of the audit logs.
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["log_id", "user_id", "role", "action", "timestamp", "details"])
+    for row in get_all_logs():
+        writer.writerow(row)
+    return out.getvalue()
 
 
 if __name__ == "__main__":

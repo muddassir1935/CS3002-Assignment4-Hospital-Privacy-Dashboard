@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 import streamlit as st
 
@@ -7,6 +7,8 @@ from crypto_utils import decrypt_text, mask_diagnosis, show_contact, show_name
 from database import (
     add_patient,
     anonymize_all,
+    export_logs_csv,
+    export_patients_csv,
     get_all_logs,
     get_all_patients,
     get_encrypted_sample,
@@ -42,6 +44,10 @@ if "logged_in" not in st.session_state:
     st.session_state.role = ""
     st.session_state.user_id = None
     st.session_state.view_logged = False
+if "start_time" not in st.session_state:
+    st.session_state.start_time = datetime.now()
+if "last_sync" not in st.session_state:
+    st.session_state.last_sync = ""
 
 
 def logout():
@@ -55,6 +61,20 @@ def logout():
 def valid_contact(contact):
     digits = "".join(ch for ch in contact if ch.isdigit())
     return len(digits) >= 7
+
+
+def show_footer():
+    # Uptime is counted from when this page was first opened.
+    # Last sync is the last time the patient data loaded fine.
+    up = datetime.now() - st.session_state.start_time
+    minutes = int(up.total_seconds() // 60)
+    last = st.session_state.last_sync or "not yet"
+    st.markdown(
+        '<p class="footer">Community Hospital — GDPR mini system, IS Assignment 4'
+        f"<br>System up since {st.session_state.start_time.strftime('%H:%M:%S')} ({minutes} min)"
+        f"<br>Last sync: {last}</p>",
+        unsafe_allow_html=True,
+    )
 
 
 st.markdown(
@@ -100,10 +120,7 @@ if not st.session_state.logged_in:
                         pass
                     st.rerun()
     st.write("")
-    st.markdown(
-        '<p class="footer">Community Hospital — GDPR mini system, IS Assignment 4</p>',
-        unsafe_allow_html=True,
-    )
+    show_footer()
     st.stop()
 
 role = st.session_state.role
@@ -129,6 +146,7 @@ st.write("")
 st.subheader("Patients")
 try:
     patients = get_all_patients()
+    st.session_state.last_sync = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     # Log the view once per login. Streamlit runs this page again on
     # every click, so logging it every time would fill the logs.
     if not st.session_state.get("view_logged"):
@@ -263,7 +281,7 @@ if can_do(role, "view_logs"):
     left, right = st.columns(2)
     with left:
         action_filter = st.selectbox(
-            "Action", ["All", "login", "logout", "view", "add", "update", "anonymize"]
+            "Action", ["All", "login", "logout", "view", "add", "update", "anonymize", "export"]
         )
     with right:
         role_filter = st.selectbox(
@@ -289,8 +307,35 @@ if can_do(role, "view_logs"):
     st.write(f"{len(log_rows)} log entries")
     st.dataframe(log_rows, use_container_width=True)
 
+if can_do(role, "view_logs"):
+    st.write("")
+    st.subheader("Backup & Export")
+    st.write("Download a CSV backup of the patient records and the audit logs.")
+    left, right = st.columns(2)
+    with left:
+        try:
+            patients_csv = export_patients_csv()
+            if st.download_button(
+                "Download patients CSV", patients_csv, "patients_backup.csv", "text/csv"
+            ):
+                try:
+                    log_action(st.session_state.user_id, role, "export", "Exported patients CSV")
+                except Exception:
+                    pass
+        except Exception:
+            st.error("Could not make the patients backup. Please try again.")
+    with right:
+        try:
+            logs_csv = export_logs_csv()
+            if st.download_button(
+                "Download audit logs CSV", logs_csv, "audit_logs.csv", "text/csv"
+            ):
+                try:
+                    log_action(st.session_state.user_id, role, "export", "Exported audit logs CSV")
+                except Exception:
+                    pass
+        except Exception:
+            st.error("Could not make the logs backup. Please try again.")
+
 st.write("")
-st.markdown(
-    '<p class="footer">Community Hospital — GDPR mini system, IS Assignment 4</p>',
-    unsafe_allow_html=True,
-)
+show_footer()
