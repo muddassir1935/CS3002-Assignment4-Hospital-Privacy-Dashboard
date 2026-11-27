@@ -25,11 +25,17 @@ st.set_page_config(page_title="Community Hospital Dashboard", layout="wide")
 st.markdown(
     """
     <style>
-    .top-bar { background: #0f766e; padding: 18px 22px; border-radius: 10px; }
-    .top-bar h1 { color: white; font-size: 26px; margin: 0; }
+    .top-bar { background: linear-gradient(135deg, #0f766e, #0d9488); padding: 20px 24px; border-radius: 12px; }
+    .top-bar h1 { color: white; font-size: 28px; margin: 0; }
     .top-bar p { color: #d7f0ec; margin: 4px 0 0 0; }
-    .card { background: #f1f5f4; padding: 16px 18px; border-radius: 10px; }
-    .footer { color: grey; font-size: 13px; }
+    .top-bar .top-meta { color: #a7e8e0; font-size: 13px; margin: 10px 0 0 0; }
+    .pill { display: inline-block; background: #f59e0b; color: #1f2937; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; margin-left: 12px; vertical-align: middle; }
+    .card { background: #f1f5f4; padding: 16px 18px; border-radius: 10px; border-left: 4px solid #0f766e; }
+    .footer { color: grey; font-size: 13px; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+    div.stButton > button { background: #0f766e; color: white; border: none; border-radius: 8px; }
+    div.stButton > button:hover { background: #0b5e57; color: white; }
+    div.stButton > button:focus { box-shadow: none; }
+    .stTextInput input { border-radius: 8px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -54,6 +60,13 @@ if "last_sync" not in st.session_state:
     st.session_state.last_sync = ""
 if "consent_seen" not in st.session_state:
     st.session_state.consent_seen = False
+
+# Read once per page run. The Anonymize and Decrypt buttons save the
+# new value and rerun the page, so this stays fresh.
+try:
+    anonymized = is_anonymized()
+except Exception:
+    anonymized = False
 
 
 def logout():
@@ -83,9 +96,15 @@ def show_footer():
     )
 
 
+pill = (
+    '<span class="pill">Anonymized mode</span>'
+    if st.session_state.get("logged_in") and anonymized
+    else ""
+)
 st.markdown(
-    '<div class="top-bar"><h1>Community Hospital</h1>'
-    "<p>Patient records, with privacy built in</p></div>",
+    '<div class="top-bar"><h1>Community Hospital' + pill + "</h1>"
+    "<p>Patient records, with privacy built in</p>"
+    '<p class="top-meta">GDPR-ready · Role-based access · Full audit trail</p></div>',
     unsafe_allow_html=True,
 )
 st.write("")
@@ -134,6 +153,7 @@ if not st.session_state.logged_in:
                     except Exception:
                         pass
                     st.rerun()
+        st.caption("Demo accounts — Admin: admin / admin123 · Doctor: Dr. Bob / doc123 · Receptionist: Alice_recep / rec123")
     st.write("")
     show_footer()
     st.stop()
@@ -163,11 +183,17 @@ if st.session_state.get("notice"):
     st.success(st.session_state.notice)
     st.session_state.notice = ""
 
-# The consent tick is cleared here, before the Add form is drawn.
-# It cannot be cleared after the checkbox itself is made.
+# The consent tick and the Add form are cleared here, before the Add
+# form is drawn. They cannot be cleared after the widgets are made.
 if st.session_state.get("clear_consent"):
     st.session_state.add_consent = False
     st.session_state.clear_consent = False
+if st.session_state.get("clear_add"):
+    st.session_state.add_name = ""
+    st.session_state.add_contact = ""
+    st.session_state.add_diagnosis = ""
+    st.session_state.add_date = date.today()
+    st.session_state.clear_add = False
 
 st.subheader("Patients")
 try:
@@ -185,10 +211,6 @@ except Exception:
     st.error("Something went wrong. Please try again.")
     patients = []
 
-try:
-    anonymized = is_anonymized()
-except Exception:
-    anonymized = False
 # Admin sees raw data only when the data is not anonymized.
 # When it is, Admin sees the same ANON view as the Doctor.
 can_raw = can_do(role, "view_raw") and not anonymized
@@ -213,6 +235,28 @@ st.write(f"{len(rows)} patients")
 st.dataframe(rows, use_container_width=True)
 old = [r for r in rows if r["Days Old"] > 365]
 st.write(f"{len(old)} records older than 365 days (flagged for review).")
+st.write("")
+
+# Quick numbers for the dashboard. The audit count is Admin only,
+# because only Admin can open the logs.
+anon_count = sum(1 for p in patients if p[4])
+if can_do(role, "view_logs"):
+    stat_cols = st.columns(4)
+else:
+    stat_cols = st.columns(3)
+with stat_cols[0]:
+    st.metric("Total patients", len(patients))
+with stat_cols[1]:
+    st.metric("Anonymized records", anon_count)
+with stat_cols[2]:
+    st.metric("Old records", len(old))
+if can_do(role, "view_logs"):
+    try:
+        audit_count = len(get_all_logs())
+    except Exception:
+        audit_count = 0
+    with stat_cols[3]:
+        st.metric("Audit entries", audit_count)
 st.write("")
 
 if can_do(role, "anonymize"):
@@ -281,11 +325,12 @@ if can_do(role, "add"):
                     str(new_date),
                 )
                 try:
-                    log_action(st.session_state.user_id, role, "add", f"Added patient {new_name.strip()} (ID {new_id})")
+                    log_action(st.session_state.user_id, role, "add", f"Added patient #{new_id}")
                 except Exception:
                     pass
                 st.session_state.notice = "Patient added."
                 st.session_state.clear_consent = True
+                st.session_state.clear_add = True
                 st.rerun()
             except Exception:
                 st.error("Something went wrong. Please try again.")
@@ -293,45 +338,71 @@ if can_do(role, "add"):
 
 if can_do(role, "edit") and patients:
     st.subheader("Edit patient")
-    if anonymized:
+    if anonymized and role != "receptionist":
+        # Admin's form shows real names, so it stays closed while the
+        # data is anonymized. The receptionist form is empty, so it
+        # can stay open.
         st.info("Data is anonymized. Decrypt it first to edit patient records.")
     else:
         by_id = {p[0]: p for p in patients}
+        if role == "receptionist":
+            # The picker shows the anonymized ID and the masked contact,
+            # which is all the receptionist sees in the list too.
+            fmt = lambda pid: f"#{pid} - {show_name(by_id[pid][1], by_id[pid][4], False)} ({show_contact(by_id[pid][2], by_id[pid][5], False)})"
+        else:
+            fmt = lambda pid: f"#{pid} - {by_id[pid][1]}"
         picked = st.selectbox(
             "Choose a patient",
             options=list(by_id.keys()),
-            format_func=lambda pid: f"#{pid} - {show_name(by_id[pid][1], by_id[pid][4], can_raw)}",
+            format_func=fmt,
         )
         current = by_id[picked]
-        edit_name = st.text_input("Name", value=current[1], key="edit_name")
-        edit_contact = st.text_input("Contact", value=current[2], key="edit_contact")
+        # The boxes use the patient ID in their key, so picking another
+        # patient shows that patient's data, not the last one opened.
+        # The receptionist boxes are cleared after a save, before they
+        # are drawn again.
+        if role == "receptionist" and st.session_state.get("clear_edit"):
+            st.session_state[f"edit_name_{picked}"] = ""
+            st.session_state[f"edit_contact_{picked}"] = ""
+            st.session_state.clear_edit = False
         if role == "receptionist":
-            # The receptionist can fix a name or a contact, but the
-            # diagnosis is medical, so it stays locked for them.
-            st.text_input("Diagnosis", value=mask_diagnosis(), disabled=True, key="edit_diagnosis")
+            # Blind edit: the form starts empty. A field left blank
+            # keeps the current value, so the receptionist never sees
+            # the stored name or contact.
+            st.write("Leave a field blank to keep the current value.")
+            edit_name = st.text_input("Name", value="", key=f"edit_name_{picked}")
+            edit_contact = st.text_input("Contact", value="", key=f"edit_contact_{picked}")
+            st.text_input("Diagnosis", value=mask_diagnosis(), disabled=True, key=f"edit_diagnosis_{picked}")
+            new_name = edit_name.strip() or current[1]
+            new_contact = edit_contact.strip() or current[2]
             new_diagnosis = current[3]
         else:
-            new_diagnosis = st.text_input("Diagnosis", value=current[3], key="edit_diagnosis")
+            edit_name = st.text_input("Name", value=current[1], key=f"edit_name_{picked}")
+            edit_contact = st.text_input("Contact", value=current[2], key=f"edit_contact_{picked}")
+            new_diagnosis = st.text_input("Diagnosis", value=current[3], key=f"edit_diagnosis_{picked}")
+            new_name = edit_name.strip()
+            new_contact = edit_contact.strip()
+            new_diagnosis = new_diagnosis.strip()
         if st.button("Save changes"):
-            if not edit_name.strip() or not edit_contact.strip() or not new_diagnosis.strip():
+            if role == "receptionist" and not edit_name.strip() and not edit_contact.strip():
+                st.error("Change at least one field.")
+            elif not new_name or not new_contact or not new_diagnosis:
                 st.error("Please fill in all fields.")
-            elif not valid_contact(edit_contact):
+            elif not valid_contact(new_contact):
                 st.error("Please enter a valid contact number.")
-            elif patient_exists(edit_name, edit_contact, exclude_id=picked):
+            elif patient_exists(new_name, new_contact, exclude_id=picked):
                 st.error("A patient with this name and contact already exists.")
             else:
                 # What changed, for the log. Values are not logged.
                 changed = []
-                if edit_name.strip() != current[1]:
+                if new_name != current[1]:
                     changed.append("name")
-                if edit_contact.strip() != current[2]:
+                if new_contact != current[2]:
                     changed.append("contact")
-                if new_diagnosis.strip() != current[3]:
+                if new_diagnosis != current[3]:
                     changed.append("diagnosis")
                 try:
-                    update_patient(
-                        picked, edit_name.strip(), edit_contact.strip(), new_diagnosis.strip()
-                    )
+                    update_patient(picked, new_name, new_contact, new_diagnosis)
                     try:
                         detail = f"Updated patient #{picked}"
                         if changed:
@@ -340,6 +411,8 @@ if can_do(role, "edit") and patients:
                     except Exception:
                         pass
                     st.session_state.notice = "Patient updated."
+                    if role == "receptionist":
+                        st.session_state.clear_edit = True
                     st.rerun()
                 except Exception:
                     st.error("Something went wrong. Please try again.")
@@ -439,4 +512,5 @@ if can_do(role, "view_logs"):
         st.bar_chart(chart_rows, x="Day")
 
 st.write("")
+st.divider()
 show_footer()

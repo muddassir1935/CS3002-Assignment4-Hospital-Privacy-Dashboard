@@ -23,7 +23,10 @@ These are the demo accounts from the assignment:
 
 Admin sees full data, Doctor sees anonymized data only, Receptionist
 adds and edits records but cannot see sensitive data. The receptionist
-can change a patient's name and contact, but not the diagnosis.
+picks a patient by their anonymized ID and the masked contact. Her
+edit form starts empty: she types the new name or contact, and a field
+left blank stays as it is, so she never sees the stored name or
+contact. The diagnosis stays locked for her.
 
 Admin can press Anonymize Data to hide names and contacts in every
 view, and Decrypt Data to see the real data again. A new patient is
@@ -32,7 +35,12 @@ ANON id for them.
 
 Patients must agree before their record is saved, and records older
 than 365 days are flagged for review. A future date is not accepted,
-and the same patient cannot be added twice.
+and the same patient cannot be added twice. The add form clears after
+every save, so no patient data stays on the screen.
+
+The dashboard shows totals for patients, anonymized records, old
+records and audit entries, and the demo accounts are listed under the
+login box.
 
 ## Files
 
