@@ -3,7 +3,7 @@ from datetime import date, datetime
 import streamlit as st
 
 from auth import can_do, check_login
-from crypto_utils import decrypt_text, mask_diagnosis, show_contact, show_name
+from crypto_utils import mask_diagnosis, show_contact, show_name
 from database import (
     add_patient,
     anonymize_all,
@@ -12,9 +12,11 @@ from database import (
     get_actions_per_day,
     get_all_logs,
     get_all_patients,
-    get_encrypted_sample,
     init_db,
+    is_anonymized,
     log_action,
+    patient_exists,
+    set_anonymized,
     update_patient,
 )
 
@@ -183,7 +185,13 @@ except Exception:
     st.error("Something went wrong. Please try again.")
     patients = []
 
-can_raw = can_do(role, "view_raw")
+try:
+    anonymized = is_anonymized()
+except Exception:
+    anonymized = False
+# Admin sees raw data only when the data is not anonymized.
+# When it is, Admin sees the same ANON view as the Doctor.
+can_raw = can_do(role, "view_raw") and not anonymized
 rows = []
 for p in patients:
     pid, name, contact, diagnosis, anon_name, anon_contact, date_added = p
@@ -210,35 +218,40 @@ st.write("")
 if can_do(role, "anonymize"):
     st.subheader("Anonymize data")
     st.write(
-        "This replaces names with ANON ids and masks contacts. "
-        "The real names are kept encrypted, so Admin can still read them back."
+        "Anonymize hides names and contacts in every view. "
+        "Decrypt shows the real data back, only for Admin. "
+        "The real names stay encrypted in the database."
     )
-    if st.button("Anonymize Data"):
-        try:
-            count = anonymize_all()
+    if anonymized:
+        st.write("Data is anonymized right now.")
+    else:
+        st.write("Data is not anonymized right now.")
+    left, right = st.columns(2)
+    with left:
+        if st.button("Anonymize Data"):
             try:
-                log_action(st.session_state.user_id, role, "anonymize", f"Anonymized {count} patients")
+                count = anonymize_all()
+                set_anonymized(True)
+                try:
+                    log_action(st.session_state.user_id, role, "anonymize", f"Anonymized {count} patients")
+                except Exception:
+                    pass
+                st.session_state.notice = "Data anonymized."
+                st.rerun()
             except Exception:
-                pass
-            st.session_state.notice = "Data anonymized."
-            st.rerun()
-        except Exception:
-            st.error("Something went wrong. Please try again.")
-    anon_rows = [
-        {"ID": p[0], "Anonymized Name": p[4], "Anonymized Contact": p[5]}
-        for p in patients
-        if p[4]
-    ]
-    if anon_rows:
-        st.dataframe(anon_rows, use_container_width=True)
-        try:
-            sample = get_encrypted_sample()
-            if sample:
-                st.write("Encrypted name (first patient):")
-                st.code(sample[1])
-                st.write(f"Decrypted back: {decrypt_text(sample[1])}")
-        except Exception:
-            st.error("Something went wrong. Please try again.")
+                st.error("Something went wrong. Please try again.")
+    with right:
+        if st.button("Decrypt Data"):
+            try:
+                set_anonymized(False)
+                try:
+                    log_action(st.session_state.user_id, role, "decrypt", "Decrypted data back to raw view")
+                except Exception:
+                    pass
+                st.session_state.notice = "Raw data is visible again."
+                st.rerun()
+            except Exception:
+                st.error("Something went wrong. Please try again.")
     st.write("")
 
 if can_do(role, "add"):
@@ -253,6 +266,10 @@ if can_do(role, "add"):
             st.error("Please fill in all fields.")
         elif not valid_contact(new_contact):
             st.error("Please enter a valid contact number.")
+        elif new_date > date.today():
+            st.error("Date added cannot be in the future.")
+        elif patient_exists(new_name, new_contact):
+            st.error("A patient with this name and contact already exists.")
         elif not consent:
             st.error("Please take patient consent first.")
         else:
@@ -276,34 +293,56 @@ if can_do(role, "add"):
 
 if can_do(role, "edit") and patients:
     st.subheader("Edit patient")
-    by_id = {p[0]: p for p in patients}
-    picked = st.selectbox(
-        "Choose a patient",
-        options=list(by_id.keys()),
-        format_func=lambda pid: f"#{pid} - {show_name(by_id[pid][1], by_id[pid][4], can_raw)}",
-    )
-    current = by_id[picked]
-    edit_name = st.text_input("Name", value=current[1], key="edit_name")
-    edit_contact = st.text_input("Contact", value=current[2], key="edit_contact")
-    edit_diagnosis = st.text_input("Diagnosis", value=current[3], key="edit_diagnosis")
-    if st.button("Save changes"):
-        if not edit_name.strip() or not edit_contact.strip() or not edit_diagnosis.strip():
-            st.error("Please fill in all fields.")
-        elif not valid_contact(edit_contact):
-            st.error("Please enter a valid contact number.")
+    if anonymized:
+        st.info("Data is anonymized. Decrypt it first to edit patient records.")
+    else:
+        by_id = {p[0]: p for p in patients}
+        picked = st.selectbox(
+            "Choose a patient",
+            options=list(by_id.keys()),
+            format_func=lambda pid: f"#{pid} - {show_name(by_id[pid][1], by_id[pid][4], can_raw)}",
+        )
+        current = by_id[picked]
+        edit_name = st.text_input("Name", value=current[1], key="edit_name")
+        edit_contact = st.text_input("Contact", value=current[2], key="edit_contact")
+        if role == "receptionist":
+            # The receptionist can fix a name or a contact, but the
+            # diagnosis is medical, so it stays locked for them.
+            st.text_input("Diagnosis", value=mask_diagnosis(), disabled=True, key="edit_diagnosis")
+            new_diagnosis = current[3]
         else:
-            try:
-                update_patient(
-                    picked, edit_name.strip(), edit_contact.strip(), edit_diagnosis.strip()
-                )
+            new_diagnosis = st.text_input("Diagnosis", value=current[3], key="edit_diagnosis")
+        if st.button("Save changes"):
+            if not edit_name.strip() or not edit_contact.strip() or not new_diagnosis.strip():
+                st.error("Please fill in all fields.")
+            elif not valid_contact(edit_contact):
+                st.error("Please enter a valid contact number.")
+            elif patient_exists(edit_name, edit_contact, exclude_id=picked):
+                st.error("A patient with this name and contact already exists.")
+            else:
+                # What changed, for the log. Values are not logged.
+                changed = []
+                if edit_name.strip() != current[1]:
+                    changed.append("name")
+                if edit_contact.strip() != current[2]:
+                    changed.append("contact")
+                if new_diagnosis.strip() != current[3]:
+                    changed.append("diagnosis")
                 try:
-                    log_action(st.session_state.user_id, role, "update", f"Updated patient #{picked}")
+                    update_patient(
+                        picked, edit_name.strip(), edit_contact.strip(), new_diagnosis.strip()
+                    )
+                    try:
+                        detail = f"Updated patient #{picked}"
+                        if changed:
+                            detail += f" ({', '.join(changed)})"
+                        log_action(st.session_state.user_id, role, "update", detail)
+                    except Exception:
+                        pass
+                    st.session_state.notice = "Patient updated."
+                    st.rerun()
                 except Exception:
-                    pass
-                st.session_state.notice = "Patient updated."
-                st.rerun()
-            except Exception:
-                st.error("Something went wrong. Please try again.")
+                    st.error("Something went wrong. Please try again.")
 
 if can_do(role, "view_logs"):
     st.write("")
@@ -316,7 +355,7 @@ if can_do(role, "view_logs"):
     left, right = st.columns(2)
     with left:
         action_filter = st.selectbox(
-            "Action", ["All", "login", "logout", "view", "add", "update", "anonymize", "export"]
+            "Action", ["All", "login", "logout", "view", "add", "update", "anonymize", "decrypt", "export"]
         )
     with right:
         role_filter = st.selectbox(
@@ -349,12 +388,15 @@ if can_do(role, "view_logs"):
     left, right = st.columns(2)
     with left:
         try:
-            patients_csv = export_patients_csv()
+            patients_csv = export_patients_csv(anonymized)
             if st.download_button(
                 "Download patients CSV", patients_csv, "patients_backup.csv", "text/csv"
             ):
                 try:
-                    log_action(st.session_state.user_id, role, "export", "Exported patients CSV")
+                    detail = "Exported patients CSV"
+                    if anonymized:
+                        detail += " (anonymized)"
+                    log_action(st.session_state.user_id, role, "export", detail)
                 except Exception:
                     pass
         except Exception:

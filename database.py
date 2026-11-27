@@ -68,6 +68,14 @@ def init_db():
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
 
     _add_encrypted_columns(cur)
 
@@ -85,7 +93,9 @@ def init_db():
                 (username, hash_password(password), role),
             )
 
+    seeded = False
     if cur.execute("SELECT COUNT(*) FROM patients").fetchone()[0] == 0:
+        seeded = True
         patients = [
             ("Ahmed Khan", "0300-1234567", "Flu", "2026-11-20"),
             ("Sara Ahmed", "0321-7654321", "Diabetes", "2026-11-21"),
@@ -102,7 +112,42 @@ def init_db():
             )
 
     conn.commit()
+    if seeded:
+        # The sample patients are anonymized from the start, so the
+        # Doctor sees ANON ids even before anyone presses the button.
+        anonymize_all()
     conn.close()
+
+
+def get_setting(key, default=""):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = ?", (key,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row else default
+
+
+def set_setting(key, value):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+    conn.commit()
+    conn.close()
+
+
+def is_anonymized():
+    # True when the Admin pressed Anonymize Data and has not
+    # pressed Decrypt Data since. Kept in the database, so it
+    # stays on for every login, not just this browser.
+    return get_setting("anonymized", "0") == "1"
+
+
+def set_anonymized(on):
+    set_setting("anonymized", "1" if on else "0")
 
 
 def get_all_patients():
@@ -127,7 +172,27 @@ def add_patient(name, contact, diagnosis, date_added):
     conn.commit()
     new_id = cur.lastrowid
     conn.close()
+    # A new patient is anonymized straight away, so no one
+    # ever sees a blank ANON id for them.
+    anonymize_patient(new_id)
     return new_id
+
+
+def patient_exists(name, contact, exclude_id=None):
+    # Same name and contact as a patient who is already there.
+    digits = "".join(ch for ch in contact if ch.isdigit())
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT patient_id, name, contact FROM patients"
+    ).fetchall()
+    conn.close()
+    for pid, pname, pcontact in rows:
+        if exclude_id is not None and pid == exclude_id:
+            continue
+        p_digits = "".join(ch for ch in pcontact if ch.isdigit())
+        if pname.strip().lower() == name.strip().lower() and p_digits == digits:
+            return True
+    return False
 
 
 def update_patient(patient_id, name, contact, diagnosis):
@@ -141,28 +206,42 @@ def update_patient(patient_id, name, contact, diagnosis):
     conn.close()
 
 
+def anonymize_patient(patient_id):
+    # Fills in the anonymized name and contact for one patient,
+    # and keeps the real values encrypted so Admin can read them back.
+    conn = get_connection()
+    _add_encrypted_columns(conn.cursor())
+    row = conn.execute(
+        "SELECT name, contact FROM patients WHERE patient_id = ?",
+        (patient_id,),
+    ).fetchone()
+    if row is None:
+        conn.close()
+        return
+    name, contact = row
+    conn.execute(
+        "UPDATE patients SET anonymized_name = ?, anonymized_contact = ?,"
+        " encrypted_name = ?, encrypted_contact = ? WHERE patient_id = ?",
+        (
+            make_anon_name(name, patient_id),
+            mask_contact(contact),
+            encrypt_text(name),
+            encrypt_text(contact),
+            patient_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
 def anonymize_all():
     # Fills in the anonymized name and contact for every patient,
     # and keeps the real values encrypted so Admin can read them back.
     conn = get_connection()
-    _add_encrypted_columns(conn.cursor())
-    rows = conn.execute(
-        "SELECT patient_id, name, contact FROM patients"
-    ).fetchall()
-    for patient_id, name, contact in rows:
-        conn.execute(
-            "UPDATE patients SET anonymized_name = ?, anonymized_contact = ?,"
-            " encrypted_name = ?, encrypted_contact = ? WHERE patient_id = ?",
-            (
-                make_anon_name(name, patient_id),
-                mask_contact(contact),
-                encrypt_text(name),
-                encrypt_text(contact),
-                patient_id,
-            ),
-        )
-    conn.commit()
+    rows = conn.execute("SELECT patient_id FROM patients").fetchall()
     conn.close()
+    for (patient_id,) in rows:
+        anonymize_patient(patient_id)
     return len(rows)
 
 
@@ -198,8 +277,10 @@ def get_all_logs():
     return rows
 
 
-def export_patients_csv():
+def export_patients_csv(anonymized=False):
     # CSV backup of the patients table, for the Admin to download.
+    # When the data is anonymized, the backup has the ANON ids
+    # instead of the real names, like the screen does.
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(
@@ -207,6 +288,16 @@ def export_patients_csv():
          "anonymized_name", "anonymized_contact", "date_added"]
     )
     for row in get_all_patients():
+        if anonymized:
+            row = (
+                row[0],
+                row[4] or "***",
+                row[5] or "XXX-XXX-",
+                row[3],
+                row[4],
+                row[5],
+                row[6],
+            )
         writer.writerow(row)
     return out.getvalue()
 

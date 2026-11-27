@@ -9,9 +9,9 @@ KEY_PATH = Path(__file__).parent / "secret.key"
 
 
 def mask_name(name):
-    if not name:
-        return "***"
-    return name[0] + "***"
+    # Just stars, no first letter. A first letter is already
+    # a clue about who the patient is.
+    return "***"
 
 
 def mask_contact(contact):

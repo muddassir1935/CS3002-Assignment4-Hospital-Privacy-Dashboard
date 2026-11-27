@@ -22,10 +22,17 @@ These are the demo accounts from the assignment:
 - Receptionist — `Alice_recep` / `rec123`
 
 Admin sees full data, Doctor sees anonymized data only, Receptionist
-adds and edits records but cannot see sensitive data.
+adds and edits records but cannot see sensitive data. The receptionist
+can change a patient's name and contact, but not the diagnosis.
+
+Admin can press Anonymize Data to hide names and contacts in every
+view, and Decrypt Data to see the real data again. A new patient is
+anonymized as soon as they are added, so no one ever sees a blank
+ANON id for them.
 
 Patients must agree before their record is saved, and records older
-than 365 days are flagged for review.
+than 365 days are flagged for review. A future date is not accepted,
+and the same patient cannot be added twice.
 
 ## Files
 
