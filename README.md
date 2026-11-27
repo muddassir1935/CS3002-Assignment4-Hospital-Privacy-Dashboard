@@ -33,6 +33,7 @@ than 365 days are flagged for review.
 - `database.py` — tables and sample data
 - `auth.py` — login and roles
 - `crypto_utils.py` — masking and Fernet encryption
+- `Assignment4.ipynb` — the same steps as the app, in a notebook
 
 The encryption key is made on the first run and saved as `secret.key`.
 It is not pushed to the repo. If you copy `hospital.db` to another
