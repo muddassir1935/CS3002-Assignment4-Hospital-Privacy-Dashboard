@@ -3,7 +3,7 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-from auth import PERMISSIONS, can_do, check_login
+from auth import PERMISSIONS, check_login
 from crypto_utils import mask_diagnosis
 from database import (
     add_patient,
@@ -86,7 +86,6 @@ st.markdown(
 
 @st.cache_resource
 def get_server_start_time():
-    # Cached once per Streamlit server process so uptime reflects actual server uptime.
     return datetime.now()
 
 
@@ -173,15 +172,15 @@ def show_footer():
 badge = ""
 if st.session_state.logged_in:
     if anonymized:
-        badge = '<span class="pill">Anonymized Mode (Fernet Encrypted)</span>'
+        badge = '<span class="pill">Anonymized</span>'
     else:
-        badge = '<span class="pill pill-green">Standard Mode</span>'
+        badge = '<span class="pill pill-green">Standard</span>'
 
 st.markdown(
     f'<div class="top-bar">'
     f"<h1>Community Hospital Privacy Dashboard{badge}</h1>"
-    f"<p>Patient record management implementing the CIA Triad &amp; GDPR privacy principles</p>"
-    f'<p class="top-meta">Confidentiality (RBAC + Fernet + Masking) · Integrity (Immutable Audit Logs) · Availability (Error Handling &amp; CSV Backups)</p>'
+    f"<p>Patient records, with privacy built in</p>"
+    f'<p class="top-meta">GDPR-ready · Role-based access · Full audit trail</p>'
     f"</div>",
     unsafe_allow_html=True,
 )
@@ -193,17 +192,15 @@ st.markdown(
 if not st.session_state.logged_in:
     if not st.session_state.consent_accepted:
         st.info(
-            "**GDPR Privacy & Data Processing Notice**\n\n"
-            "This system processes patient records solely for healthcare treatment under the principles of "
-            "**lawful, fair, and transparent processing**, **data minimization**, and **storage limitation** "
-            f"(default retention: {retention_days} days). All user actions are recorded in an immutable audit log "
-            "for accountability. By continuing, you agree to handle patient data in accordance with hospital privacy policy."
+            "**Privacy notice**\n\n"
+            "We keep patient records only for treatment, and we keep them safe. "
+            "Everything you do here is written to the audit log."
         )
         if st.button("Accept Privacy Notice & Continue", type="primary"):
             st.session_state.consent_accepted = True
             st.rerun()
     else:
-        st.success("GDPR Privacy Notice acknowledged for this session.")
+        st.success("Privacy notice accepted for this session.")
 
     left, middle, right = st.columns([1, 2, 1])
     with middle:
@@ -218,7 +215,7 @@ if not st.session_state.logged_in:
             )
 
         if not st.session_state.consent_accepted:
-            st.caption("Please accept the GDPR Privacy Notice above before signing in.")
+            st.caption("Please accept the privacy notice above before signing in.")
 
         if submitted:
             clean_user = username.strip()
@@ -278,7 +275,7 @@ with st.sidebar:
     st.write(f"**Retention Policy:** {retention_days} days")
 
     st.divider()
-    st.markdown("**Active RBAC Permissions**")
+    st.markdown("**Your permissions**")
     for perm in sorted(PERMISSIONS.get(role, set())):
         st.caption(f"- {perm.replace('_', ' ')}")
 
@@ -294,9 +291,9 @@ with st.sidebar:
 
 # Role banner & one-time success notifications
 role_descriptions = {
-    "admin": "Full access to raw and anonymized patient records, Fernet encryption/decryption, GDPR retention controls, Integrity Audit Log, and CSV backups.",
-    "doctor": "Read-only access to anonymized patient identities (ANON IDs and masked contacts) alongside clinical diagnoses.",
-    "receptionist": "Can register new patients and perform blind updates on contact/name fields. Sensitive patient records and diagnoses remain hidden.",
+    "admin": "You can see full patient data, anonymize it, and check the logs.",
+    "doctor": "You can see anonymized patient data only.",
+    "receptionist": "You can add patients and edit their name or contact. You cannot see sensitive data.",
 }
 st.markdown(f'<div class="role-note">{role_descriptions[role]}</div>', unsafe_allow_html=True)
 
@@ -335,7 +332,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 def render_add_patient_form():
     st.subheader("Register New Patient")
-    st.caption("Patient consent is mandatory before saving personal health data (GDPR Art. 6 & 9).")
+    st.caption("The patient has to agree before we save their record.")
 
     new_name = st.text_input("Full Name", key="add_name", placeholder="e.g. Ali Raza")
     new_contact = st.text_input("Contact Number", key="add_contact", placeholder="e.g. 0300-1234567")
@@ -388,7 +385,7 @@ def render_edit_patient_form():
         return
 
     if role == "admin" and anonymized:
-        st.info("Data is currently in Anonymized Mode. Decrypt data first in 'Privacy & GDPR' to edit raw records as Admin.")
+        st.info("Data is anonymized. Decrypt it first to edit patient records.")
         return
 
     by_id = {p["patient_id"]: p for p in editable}
@@ -511,63 +508,62 @@ if role == "admin":
         st.dataframe(table_rows, width="stretch", hide_index=True)
         if expired_records:
             st.warning(
-                f"{len(expired_records)} active record(s) exceed the {retention_days}-day GDPR retention window. "
-                "Review them in the 'Privacy & GDPR' tab."
+                f"{len(expired_records)} records are older than {retention_days} days. "
+                "Check the 'Privacy & GDPR' tab."
             )
 
     with tab_privacy:
-        st.subheader("Reversible Anonymization (Fernet Encryption)")
+        st.subheader("Anonymize data")
         st.write(
-            "**Anonymize & Encrypt Data** replaces raw names and contacts in SQLite with `ANON_XXXX` IDs and "
-            "masked contacts (`XXX-XXX-4567`) while storing reversible Fernet ciphertexts (`secret.key`). "
-            "**Decrypt & Restore Data** runs Fernet decryption to recover raw values for Admin view."
+            "Anonymize hides the real names and contacts and stores them encrypted instead. "
+            "Decrypt brings them back, only for the admin."
         )
 
         if anonymized:
-            st.warning("Current status: **Anonymized Mode** — raw PII in `patients` table is replaced with masked values.")
+            st.warning("Data is anonymized right now.")
         else:
-            st.success("Current status: **Decrypted (Standard Mode)** — Admin sees raw + anonymized data; Doctor & Receptionist still see masked data only.")
+            st.success("Data is not anonymized right now.")
 
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("Anonymize & Encrypt Data", type="primary", width="stretch"):
+            if st.button("Anonymize Data", type="primary", width="stretch"):
                 try:
                     count = anonymize_all(role=role)
                     try:
-                        log_action(user_id, role, "anonymization", f"Anonymized & Fernet-encrypted {count} records")
+                        log_action(user_id, role, "anonymization", f"Anonymized {count} patients")
                     except Exception:
                         pass
-                    st.session_state.notice = f"Anonymized and encrypted {count} patient records."
+                    st.session_state.notice = f"Anonymized {count} patient records."
                     st.rerun()
                 except Exception as err:
-                    st.error(f"Anonymization failed: {err}")
+                    st.error(str(err))
         with c2:
-            if st.button("Decrypt & Restore Data", width="stretch"):
+            if st.button("Decrypt Data", width="stretch"):
                 try:
                     count = decrypt_all(role=role)
                     try:
-                        log_action(user_id, role, "decryption", f"Decrypted {count} records via Fernet")
+                        log_action(user_id, role, "decryption", f"Decrypted {count} records")
                     except Exception:
                         pass
-                    st.session_state.notice = f"Decrypted {count} patient records back to raw view."
+                    st.session_state.notice = "Raw data is visible again."
                     st.rerun()
                 except Exception as err:
-                    st.error(f"Decryption failed: {err}")
+                    st.error(str(err))
 
         sample = get_encrypted_sample()
         if sample:
-            with st.expander("Inspect Live Fernet Encryption Sample (DB Storage Proof)"):
+            with st.expander("See what is stored in the database"):
                 spid, sname, sanon, smask, senc = sample
                 st.write(f"**Patient #{spid}** — Stored `name` column: `{sname}` | `anonymized_name`: `{sanon}` | `anonymized_contact`: `{smask}`")
                 st.code(senc, language="text")
 
         st.divider()
-        st.subheader("GDPR Data Retention Timer & Right to Erasure")
+        st.subheader("Old records and erasure")
 
         r1, r2 = st.columns([2, 1])
         with r1:
             new_limit = st.number_input(
-                "Retention Window (days)",
+                "Keep records for (days)",
                 min_value=30,
                 max_value=3650,
                 value=retention_days,
@@ -576,11 +572,11 @@ if role == "admin":
         with r2:
             st.write("")
             st.write("")
-            if st.button("Update Retention Policy"):
+            if st.button("Save"):
                 try:
                     set_retention_days(int(new_limit), role=role)
-                    log_action(user_id, role, "update", f"Updated GDPR retention window to {int(new_limit)} days")
-                    st.session_state.notice = f"Retention policy updated to {int(new_limit)} days."
+                    log_action(user_id, role, "update", f"Changed retention to {int(new_limit)} days")
+                    st.session_state.notice = f"Retention set to {int(new_limit)} days."
                     st.rerun()
                 except Exception as err:
                     st.error(str(err))
@@ -597,10 +593,10 @@ if role == "admin":
             if not p["is_erased"] and p["days_left"] <= 30
         ]
         if alert_rows:
-            st.write("**Records Expired or Expiring Within 30 Days**")
+            st.write("**Expired or expiring records**")
             st.dataframe(alert_rows, width="stretch", hide_index=True)
-            confirm_purge = st.checkbox("Confirm permanent PII erasure for all expired records")
-            if st.button("Purge Expired PII", disabled=not confirm_purge):
+            confirm_purge = st.checkbox("Yes, erase all expired records for good.")
+            if st.button("Erase expired records", disabled=not confirm_purge):
                 try:
                     erased_ids = purge_expired_patients(role=role, retention_days=retention_days)
                     if erased_ids:
@@ -608,9 +604,9 @@ if role == "admin":
                             user_id,
                             role,
                             "erasure",
-                            f"Retention purge erased PII for patient IDs: {erased_ids}",
+                            f"Erased expired patients: {erased_ids}",
                         )
-                        st.session_state.notice = f"Purged PII for {len(erased_ids)} expired record(s)."
+                        st.session_state.notice = f"Erased {len(erased_ids)} expired records."
                     else:
                         st.session_state.notice = "No expired records needed purging."
                     st.rerun()
@@ -619,20 +615,20 @@ if role == "admin":
         else:
             st.info("No active records are expired or expiring within 30 days.")
 
-        st.markdown("**Individual Right to Erasure (GDPR Art. 17)**")
+        st.markdown("**Erase a patient**")
         active_for_erasure = [p for p in patients if not p["is_erased"]]
         if active_for_erasure:
             erase_map = {
                 p["patient_id"]: f"#{p['patient_id']} — {p['anonymized_name']} ({p['date_added']})"
                 for p in active_for_erasure
             }
-            erase_pid = st.selectbox("Select Patient for Permanent PII Erasure", options=list(erase_map.keys()), format_func=lambda pid: erase_map[pid], key="erase_patient_select")
-            confirm_single = st.checkbox("I confirm this irreversibly scrubs personal identifiers and Fernet keys for this patient")
-            if st.button("Erase Patient PII", disabled=not confirm_single):
+            erase_pid = st.selectbox("Choose a patient to erase", options=list(erase_map.keys()), format_func=lambda pid: erase_map[pid], key="erase_patient_select")
+            confirm_single = st.checkbox("I know this cannot be undone.")
+            if st.button("Erase patient", disabled=not confirm_single):
                 try:
                     if erase_patient_pii(erase_pid, role=role):
-                        log_action(user_id, role, "erasure", f"GDPR Art. 17 PII erasure completed for patient #{erase_pid}")
-                        st.session_state.notice = f"PII permanently erased for patient #{erase_pid}."
+                        log_action(user_id, role, "erasure", f"Erased patient #{erase_pid}")
+                        st.session_state.notice = f"Patient #{erase_pid} erased."
                         st.rerun()
                 except Exception as err:
                     st.error(str(err))
@@ -647,8 +643,7 @@ if role == "admin":
     with tab_logs:
         st.subheader("Integrity Audit Log")
         st.caption(
-            "Admin-only accountability trail. Protected at the SQLite layer by append-only triggers "
-            "(`prevent_log_update`, `prevent_log_delete`) so entries cannot be altered or erased."
+            "Only the admin can see this. Entries cannot be changed or deleted once written."
         )
 
         f1, f2 = st.columns(2)

@@ -15,8 +15,7 @@ from crypto_utils import (
 
 DB_PATH = Path(__file__).parent / "hospital.db"
 
-# Keep a small mirror of role permissions here so database operations
-# enforce RBAC directly without creating a circular import with auth.py.
+# Same permissions as auth.py, so the database can check roles itself.
 ROLE_PERMISSIONS = {
     "admin": {
         "view_raw",
@@ -111,7 +110,7 @@ def init_db():
             """
         )
 
-        # Database-level integrity: audit logs are append-only and cannot be edited or deleted.
+        # Logs cannot be changed or deleted once written.
         cur.execute(
             """
             CREATE TRIGGER IF NOT EXISTS prevent_log_update
@@ -191,7 +190,7 @@ def init_db():
         conn.close()
 
     if seeded:
-        # Pre-populate anonymized & Fernet-encrypted columns while keeping raw view ready for Admin.
+        # Fill the anonymized and encrypted columns for the sample patients.
         _populate_privacy_fields_for_all()
 
 
@@ -267,7 +266,6 @@ def set_retention_days(days, role="admin"):
 
 
 def _real_values(row):
-    """Return real (name, contact) for a patient row, decrypting Fernet tokens when needed."""
     name, contact, enc_name, enc_contact, is_erased = row
     if is_erased:
         return name, contact
@@ -279,7 +277,6 @@ def _real_values(row):
 
 
 def get_all_patients():
-    """Return raw tuples matching the core assignment columns (used internally and in notebook)."""
     conn = get_connection()
     try:
         return conn.execute(
@@ -295,7 +292,6 @@ def get_all_patients():
 
 
 def get_patients_for_role(role):
-    """Return patient records strictly filtered according to the caller's role."""
     conn = get_connection()
     try:
         rows = conn.execute(
@@ -396,7 +392,6 @@ def get_patients_for_role(role):
 
 
 def patient_exists(name, contact, exclude_id=None):
-    """Check duplicates accurately even when records are currently in anonymized mode."""
     target_name = name.strip().lower()
     target_digits = "".join(ch for ch in contact if ch.isdigit())
 
@@ -461,8 +456,8 @@ def add_patient(name, contact, diagnosis, date_added, consent_given=True, role="
         enc_name = encrypt_text(clean_name)
         enc_contact = encrypt_text(clean_contact)
 
-        # If system is currently in Anonymized Mode, store masked values in name/contact too
-        # while keeping real PII protected inside the Fernet-encrypted columns.
+        # If the data is anonymized right now, store the masked values
+        # here too. The real ones stay in the encrypted columns.
         stored_name = anon_name if anon_mode else clean_name
         stored_contact = anon_contact if anon_mode else clean_contact
 
@@ -491,11 +486,8 @@ def add_patient(name, contact, diagnosis, date_added, consent_given=True, role="
 
 
 def update_patient(patient_id, name=None, contact=None, diagnosis=None, role="admin"):
-    """
-    Update a patient record with RBAC enforcement and keep anonymized/Fernet columns in sync.
-    For Receptionist blind edits, blank name/contact keeps the existing real value, and diagnosis
-    cannot be viewed or overwritten.
-    """
+    # A blank name or contact keeps the old value. The receptionist
+    # cannot change the diagnosis.
     _check_role(role, "edit")
 
     conn = get_connection()
@@ -522,7 +514,7 @@ def update_patient(patient_id, name=None, contact=None, diagnosis=None, role="ad
         new_name = (name or "").strip() or real_old_name
         new_contact = (contact or "").strip() or real_old_contact
         if role == "receptionist":
-            # Receptionist cannot view or alter sensitive clinical diagnoses.
+            # The receptionist cannot change the diagnosis.
             new_diagnosis = old_diag
         else:
             new_diagnosis = (diagnosis or "").strip() or old_diag
@@ -541,7 +533,7 @@ def update_patient(patient_id, name=None, contact=None, diagnosis=None, role="ad
         if new_diagnosis != old_diag:
             changed_fields.append("diagnosis")
 
-        # Keep anonymized and Fernet-encrypted fields completely in sync after edit.
+        # Update the anonymized and encrypted columns too.
         anon_name = make_anon_name(new_name, patient_id)
         anon_contact = mask_contact(new_contact)
         new_enc_name = encrypt_text(new_name)
@@ -577,10 +569,9 @@ def update_patient(patient_id, name=None, contact=None, diagnosis=None, role="ad
 
 
 def anonymize_all(role="admin"):
-    """
-    Replace raw name/contact in the database with masked ANON/XXX values
-    while storing reversible Fernet ciphertexts in encrypted_name/encrypted_contact.
-    """
+    # Anonymize swaps the real name and contact for masked values.
+    # The real values only live in the Fernet columns, so secret.key
+    # has to match hospital.db.
     _check_role(role, "anonymize")
 
     conn = get_connection()
@@ -594,6 +585,17 @@ def anonymize_all(role="admin"):
         ).fetchall()
 
         for pid, name, contact, enc_name, enc_contact, is_erased in rows:
+            # If this row is already anonymized and the key cannot open
+            # its token, the real name is gone from here. Stop instead
+            # of saving the ANON value as the real name.
+            if enc_name and name.startswith("ANON_") and safe_decrypt(enc_name, fallback=None) is None:
+                raise ValueError(
+                    f"Could not decrypt patient #{pid}. Check that secret.key matches hospital.db."
+                )
+            if enc_contact and contact.startswith("XXX-XXX-") and safe_decrypt(enc_contact, fallback=None) is None:
+                raise ValueError(
+                    f"Could not decrypt patient #{pid}. Check that secret.key matches hospital.db."
+                )
             real_name, real_contact = _real_values(
                 (name, contact, enc_name, enc_contact, is_erased)
             )
@@ -634,10 +636,7 @@ def anonymize_all(role="admin"):
 
 
 def decrypt_all(role="admin"):
-    """
-    Reversible anonymization: use Fernet decryption (secret.key) to restore
-    real names and contacts back into the patients table for authorized Admin access.
-    """
+    # Decrypt brings the real names and contacts back from the Fernet columns.
     _check_role(role, "decrypt")
 
     conn = get_connection()
@@ -653,6 +652,12 @@ def decrypt_all(role="admin"):
         restored = 0
         for pid, name, contact, enc_name, enc_contact in rows:
             if not enc_name or not enc_contact:
+                # A row with no token but an ANON name is stuck: there
+                # is nothing to restore, so do not flip the mode flag.
+                if name.startswith("ANON_") or contact.startswith("XXX-XXX-"):
+                    raise ValueError(
+                        f"Could not decrypt patient #{pid}. Check that secret.key matches hospital.db."
+                    )
                 continue
             plain_name = safe_decrypt(enc_name, fallback="")
             plain_contact = safe_decrypt(enc_contact, fallback="")
@@ -679,10 +684,8 @@ def decrypt_all(role="admin"):
 
 
 def erase_patient_pii(patient_id, role="admin"):
-    """
-    GDPR Art. 17 (Right to Erasure): permanently scrub raw and Fernet-encrypted PII
-    so the patient can never be re-identified, while keeping non-identifiable diagnosis stats.
-    """
+    # Erase a patient for good. The name and contact go, the diagnosis
+    # stays for the stats.
     _check_role(role, "delete")
 
     conn = get_connection()
@@ -714,7 +717,7 @@ def erase_patient_pii(patient_id, role="admin"):
 
 
 def purge_expired_patients(role="admin", retention_days=None):
-    """GDPR Storage Limitation: erase PII on all active records older than retention_days."""
+    # Erase every patient older than the retention limit.
     _check_role(role, "manage_retention")
     limit_days = retention_days if retention_days is not None else get_retention_days()
     today = date.today()

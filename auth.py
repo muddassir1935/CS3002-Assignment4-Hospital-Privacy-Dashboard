@@ -1,8 +1,7 @@
 from crypto_utils import verify_password
 from database import get_connection
 
-# Role-Based Access Control (RBAC) permissions matrix.
-# Checked both in the UI and inside backend database functions.
+# What each role is allowed to do.
 PERMISSIONS = {
     "admin": {
         "view_raw",
@@ -51,8 +50,3 @@ def check_login(username, password):
 
 def can_do(role, action):
     return action in PERMISSIONS.get(role, set())
-
-
-def require_permission(role, action):
-    if not can_do(role, action):
-        raise PermissionError(f"Role '{role}' is not authorized to perform '{action}'.")
